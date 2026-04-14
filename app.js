@@ -185,11 +185,8 @@ function renderHeatMap() {
     cur.setDate(cur.getDate() + 1);
   }
 
-  // Pad to full last column
-  const rem = cells.length % 7;
-  if (rem > 0) for (let i = 0; i < 7 - rem; i++) cells.push({ key: '', level: -1 });
-
-  const numCols = cells.length / 7;
+  // No padding on last column — grid ends exactly at today, like GitHub
+  const numCols = Math.ceil(cells.length / 7);
   const labelArr = Array(numCols).fill('');
   Object.entries(monthLabels).forEach(([col, name]) => { labelArr[col] = name; });
 
@@ -200,8 +197,10 @@ function renderHeatMap() {
 
   return `
     <div class="heatmap-wrap">
-      <div class="hm-months" style="grid-auto-columns:14px">${labelsHtml}</div>
-      <div class="hm-grid">${cellsHtml}</div>
+      <div class="hm-inner">
+        <div class="hm-months" style="grid-auto-columns:14px">${labelsHtml}</div>
+        <div class="hm-grid">${cellsHtml}</div>
+      </div>
       <div class="hm-legend">
         <span class="legend-label">Menos</span>
         <div class="hm-cell level-0"></div>

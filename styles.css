@@ -280,7 +280,19 @@ body {
   color: var(--text-faint);
 }
 
-.heatmap-wrap { overflow-x: auto; padding-bottom: 8px; display: flex; justify-content: center; }
+.heatmap-wrap {
+  overflow-x: auto;
+  padding-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hm-inner {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
 
 .hm-months {
   display: grid;
