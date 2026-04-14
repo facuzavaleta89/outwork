@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0A0A0A">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="OUTWORK">
+  <title>OUTWORK</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Splash Screen — visible on first load, hidden after 1.4s -->
+  <div id="splash">
+    <div class="splash-inner">
+      <div class="splash-logo">
+        <svg width="72" height="72" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+          <rect width="192" height="192" rx="38" fill="#141414"/>
+          <rect x="26" y="123" width="28" height="44" rx="6" fill="#1E4A00"/>
+          <rect x="62" y="101" width="28" height="66" rx="6" fill="#3C8200"/>
+          <rect x="98" y="72"  width="28" height="95" rx="6" fill="#82D200"/>
+          <rect x="134" y="36" width="28" height="131" rx="6" fill="#C6FF00"/>
+          <circle cx="164" cy="26" r="10" fill="#C6FF00"/>
+        </svg>
+        <span class="splash-name">OUTWORK</span>
+      </div>
+      <div class="splash-bar-wrap">
+        <div class="splash-bar"></div>
+      </div>
+      <span class="splash-tagline">Entrenamiento al aire libre</span>
+    </div>
+  </div>
+
+  <div id="app" style="opacity:0;transition:opacity 0.3s"></div>
+
+  <div id="session-overlay" class="hidden">
+    <div id="session-content"></div>
+  </div>
+
+  <nav id="bottom-nav">
+    <button class="nav-btn" data-view="home" onclick="navigate('home')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/>
+      </svg>
+      <span>Inicio</span>
+    </button>
+    <button class="nav-btn" data-view="history" onclick="navigate('history')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/>
+      </svg>
+      <span>Historial</span>
+    </button>
+    <button class="nav-btn" data-view="progress" onclick="navigate('progress')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/>
+      </svg>
+      <span>Progreso</span>
+    </button>
+    <button class="nav-btn" data-view="exercises" onclick="navigate('exercises')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+        <line x1="8" y1="18" x2="21" y2="18"/>
+        <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/>
+        <line x1="3" y1="18" x2="3.01" y2="18"/>
+      </svg>
+      <span>Ejercicios</span>
+    </button>
+  </nav>
+
+  <script>
+    // Splash logic — always show briefly to feel native
+    window.addEventListener('DOMContentLoaded', () => {
+      const splash = document.getElementById('splash');
+      const app    = document.getElementById('app');
+      setTimeout(() => {
+        splash.classList.add('hiding');
+        setTimeout(() => {
+          splash.style.display = 'none';
+          app.style.opacity = '1';
+        }, 400);
+      }, 1400);
+    });
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>

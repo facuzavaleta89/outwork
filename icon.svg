@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- Background -->
+  <rect width="192" height="192" rx="38" fill="#0A0A0A"/>
+
+  <!-- Ascending bars -->
+  <!-- Bar 1 -->
+  <rect x="26" y="123" width="28" height="44" rx="6" fill="#1E4A00"/>
+  <!-- Bar 2 -->
+  <rect x="62" y="101" width="28" height="66" rx="6" fill="#3C8200"/>
+  <!-- Bar 3 -->
+  <rect x="98" y="72" width="28" height="95" rx="6" fill="#82D200"/>
+  <!-- Bar 4 -->
+  <rect x="134" y="36" width="28" height="131" rx="6" fill="#C6FF00"/>
+
+  <!-- Accent dot -->
+  <circle cx="164" cy="26" r="10" fill="#C6FF00"/>
+</svg>
