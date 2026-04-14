@@ -562,11 +562,10 @@ function renderSelectStep() {
       <h4 class="sess-muscle-name">${muscle}</h4>
       ${exs.map(e => {
         const sel = state.selectedIds.includes(e.id);
-        return `<label class="ex-checkbox ${sel ? 'checked' : ''}" onclick="toggleEx('${e.id}')">
-          <input type="checkbox" ${sel ? 'checked' : ''}>
+        return `<div class="ex-checkbox ${sel ? 'checked' : ''}" onclick="toggleEx('${e.id}')">
           <span>${e.name}</span>
           <div class="check-mark">${sel ? '✓' : ''}</div>
-        </label>`;
+        </div>`;
       }).join('')}
     </div>`).join('');
 

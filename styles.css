@@ -280,7 +280,7 @@ body {
   color: var(--text-faint);
 }
 
-.heatmap-wrap { overflow-x: auto; padding-bottom: 8px; }
+.heatmap-wrap { overflow-x: auto; padding-bottom: 8px; display: flex; justify-content: center; }
 
 .hm-months {
   display: grid;
@@ -718,6 +718,8 @@ body {
   padding: 14px 16px;
   margin-bottom: 6px;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
   transition: border-color 0.15s, background 0.15s;
   -webkit-tap-highlight-color: transparent;
   font-size: 15px;
