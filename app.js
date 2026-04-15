@@ -870,12 +870,11 @@ const TimerDB = {
 
 // ─── Timer State ──────────────────────────────────────────────
 const T = {
-  // profile form values (for new/edit)
   form: { name: 'Mi rutina', sets: 4, workSecs: 40, restSecs: 20, prepSecs: 5 },
-  editingId: null,   // null = new, string = editing existing
+  editingId: null,
 
-  // runtime
-  phase: 'idle',     // 'idle' | 'prep' | 'work' | 'rest' | 'done'
+  // runtime — persists while navigating away
+  phase: 'idle',   // 'idle' | 'prep' | 'work' | 'rest' | 'done'
   currentSet: 0,
   secondsLeft: 0,
   totalSecs: 0,
@@ -883,55 +882,34 @@ const T = {
   interval: null,
   profile: null,
   wakeLock: null,
+
+  get active() { return this.profile !== null && this.phase !== 'idle'; },
 };
 
 // ─── Web Audio ────────────────────────────────────────────────
 let AC = null;
 function getAC() {
   if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
-  // iOS requires resume after user gesture
   if (AC.state === 'suspended') AC.resume();
   return AC;
 }
-
 function beep(freq, dur, type = 'sine', vol = 0.35, startDelay = 0) {
   try {
-    const ac   = getAC();
-    const osc  = ac.createOscillator();
+    const ac = getAC();
+    const osc = ac.createOscillator();
     const gain = ac.createGain();
-    osc.connect(gain);
-    gain.connect(ac.destination);
-    osc.type = type;
-    osc.frequency.value = freq;
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.type = type; osc.frequency.value = freq;
     const t = ac.currentTime + startDelay;
     gain.gain.setValueAtTime(vol, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    osc.start(t);
-    osc.stop(t + dur + 0.05);
+    osc.start(t); osc.stop(t + dur + 0.05);
   } catch {}
 }
-
-// Short tick for countdown (3, 2, 1)
-function soundTick()  { beep(880, 0.08, 'sine', 0.25); }
-
-// Double ascending beep — "go!"
-function soundStart() {
-  beep(660, 0.10, 'square', 0.28, 0);
-  beep(990, 0.15, 'square', 0.32, 0.13);
-}
-
-// Descending soft tone — "rest"
-function soundRest() {
-  beep(660, 0.12, 'sine', 0.30, 0);
-  beep(440, 0.25, 'sine', 0.22, 0.14);
-}
-
-// Triple ascending — "done!"
-function soundDone() {
-  beep(660, 0.10, 'square', 0.28, 0);
-  beep(880, 0.10, 'square', 0.30, 0.14);
-  beep(1100, 0.22, 'square', 0.28, 0.28);
-}
+function soundTick()  { beep(880, 0.08, 'sine',   0.25); }
+function soundStart() { beep(660, 0.10, 'square', 0.28, 0); beep(990, 0.15, 'square', 0.32, 0.13); }
+function soundRest()  { beep(660, 0.12, 'sine',   0.30, 0); beep(440, 0.25, 'sine',   0.22, 0.14); }
+function soundDone()  { beep(660, 0.10, 'square', 0.28, 0); beep(880, 0.10, 'square', 0.30, 0.14); beep(1100, 0.22, 'square', 0.28, 0.28); }
 
 // ─── WakeLock ─────────────────────────────────────────────────
 async function acquireWakeLock() {
@@ -944,14 +922,30 @@ function releaseWakeLock() {
 
 // ─── Timer View ───────────────────────────────────────────────
 function viewTimer() {
-  const profiles = TimerDB.get();
-  const f = T.form;
+  const profiles  = TimerDB.get();
+  const f         = T.form;
   const isEditing = T.editingId !== null;
+
+  // If there's an active timer, show a resume banner at the top
+  const resumeBanner = T.active ? `
+    <div class="resume-banner" onclick="openTimerOverlay()">
+      <div class="resume-info">
+        <div class="resume-dot ${T.running ? 'pulsing' : ''}"></div>
+        <div>
+          <div class="resume-name">${T.profile.name}</div>
+          <div class="resume-meta">
+            ${T.phase === 'prep' ? 'PREPARANDO' : T.phase === 'work' ? `SERIE ${T.currentSet}/${T.profile.sets}` : T.phase === 'rest' ? 'DESCANSO' : ''}
+            · ${T.running ? 'corriendo' : 'pausado'}
+          </div>
+        </div>
+      </div>
+      <div class="resume-time">${fmtSecs(T.secondsLeft)}</div>
+    </div>` : '';
 
   const profilesHtml = profiles.length
     ? profiles.map(p => `
         <div class="profile-card">
-          <div class="profile-info" onclick="startTimer('${p.id}')">
+          <div class="profile-info" onclick="openProfileTimer('${p.id}')">
             <div class="profile-name">${p.name}</div>
             <div class="profile-meta">${p.sets} series · ${p.workSecs}s trabajo · ${p.restSecs}s descanso · prep ${p.prepSecs}s</div>
           </div>
@@ -968,9 +962,9 @@ function viewTimer() {
                 <path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/>
               </svg>
             </button>
-            <button class="play-btn" onclick="startTimer('${p.id}')">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5,3 19,12 5,21" fill="#0A0A0A" stroke="none"/>
+            <button class="play-btn" onclick="startTimerAutoplay('${p.id}')">
+              <svg width="18" height="18" viewBox="0 0 24 24">
+                <polygon points="5,3 19,12 5,21" fill="#0A0A0A"/>
               </svg>
             </button>
           </div>
@@ -978,21 +972,24 @@ function viewTimer() {
       .join('')
     : '<p class="empty-state" style="padding:20px 0">No hay perfiles todavía.<br>Creá uno abajo.</p>';
 
-  // Form num-input helper
+  // num field: +/- buttons + editable input in the middle
   const numField = (label, key, min, max, unit = '') => `
     <div class="form-field">
       <span class="form-label">${label}${unit ? ' (' + unit + ')' : ''}</span>
       <div class="num-input-wrap">
         <button class="num-input-btn" onclick="tFormChg('${key}',-1,${min},${max})">−</button>
-        <span class="num-input-val" id="tf-${key}">${f[key]}</span>
+        <input class="num-input-text" type="number" id="tf-${key}" value="${f[key]}"
+          min="${min}" max="${max}"
+          onchange="tFormSet('${key}',this.value,${min},${max})"
+          oninput="tFormSet('${key}',this.value,${min},${max})">
         <button class="num-input-btn" onclick="tFormChg('${key}',1,${min},${max})">+</button>
       </div>
     </div>`;
 
   return `<div class="view timer-view">
     <h1 class="view-title">TIMER</h1>
+    ${resumeBanner}
     <div class="timer-profiles">${profilesHtml}</div>
-
     <div class="profile-form-wrap">
       <h3>${isEditing ? 'EDITAR PERFIL' : 'NUEVO PERFIL'}</h3>
       <div class="form-row full">
@@ -1004,11 +1001,11 @@ function viewTimer() {
       </div>
       <div class="form-row">
         ${numField('Series', 'sets', 1, 30)}
-        ${numField('Preparación', 'prepSecs', 0, 30, 'seg')}
+        ${numField('Preparación', 'prepSecs', 0, 60, 'seg')}
       </div>
       <div class="form-row">
-        ${numField('Trabajo', 'workSecs', 5, 300, 'seg')}
-        ${numField('Descanso', 'restSecs', 0, 300, 'seg')}
+        ${numField('Trabajo', 'workSecs', 5, 3600, 'seg')}
+        ${numField('Descanso', 'restSecs', 0, 3600, 'seg')}
       </div>
       <div style="display:flex;gap:8px;margin-top:4px">
         ${isEditing ? `<button class="secondary-btn" style="flex:1" onclick="cancelEditProfile()">Cancelar</button>` : ''}
@@ -1023,13 +1020,23 @@ function viewTimer() {
 function tFormChg(key, delta, min, max) {
   T.form[key] = Math.max(min, Math.min(max, T.form[key] + delta));
   const el = document.getElementById('tf-' + key);
-  if (el) el.textContent = T.form[key];
+  if (el) el.value = T.form[key];
+}
+function tFormSet(key, val, min, max) {
+  const n = parseInt(val, 10);
+  if (!isNaN(n)) T.form[key] = Math.max(min, Math.min(max, n));
 }
 
 function saveProfile() {
+  // Sync all num inputs before saving (user might have typed without blur)
+  ['sets','prepSecs','workSecs','restSecs'].forEach(k => {
+    const el = document.getElementById('tf-' + k);
+    if (el) tFormSet(k, el.value, k === 'sets' ? 1 : 0, k === 'sets' ? 30 : 3600);
+  });
   const name = (document.getElementById('tf-name')?.value || T.form.name).trim();
   if (!name) { alert('Poné un nombre al perfil.'); return; }
   T.form.name = name;
+  if (T.form.workSecs < 5) { alert('El tiempo de trabajo debe ser al menos 5 segundos.'); return; }
 
   if (T.editingId) {
     TimerDB.update({ id: T.editingId, ...T.form });
@@ -1037,6 +1044,7 @@ function saveProfile() {
   } else {
     TimerDB.add({ id: uid(), ...T.form });
   }
+  T.form = { name: 'Mi rutina', sets: 4, workSecs: 40, restSecs: 20, prepSecs: 5 };
   render();
 }
 
@@ -1046,7 +1054,6 @@ function editProfile(id) {
   T.form = { name: p.name, sets: p.sets, workSecs: p.workSecs, restSecs: p.restSecs, prepSecs: p.prepSecs };
   T.editingId = id;
   render();
-  // Scroll to form
   setTimeout(() => document.querySelector('.profile-form-wrap')?.scrollIntoView({ behavior: 'smooth' }), 50);
 }
 
@@ -1060,55 +1067,90 @@ function deleteProfile(id) {
   if (confirm('¿Eliminar este perfil?')) { TimerDB.delete(id); render(); }
 }
 
-// ─── Timer Execution ──────────────────────────────────────────
-function startTimer(id) {
+// ─── Two entry modes ──────────────────────────────────────────
+// Tap on card → load profile, open overlay PAUSED (user hits play)
+function openProfileTimer(id) {
+  // If same profile already active, just re-open overlay
+  if (T.active && T.profile?.id === id) { openTimerOverlay(); return; }
   const p = TimerDB.get().find(x => x.id === id);
   if (!p) return;
+  loadTimerProfile(p, false);
+  openTimerOverlay();
+}
+
+// Tap on ▶ button → load and AUTOPLAY
+function startTimerAutoplay(id) {
+  const p = TimerDB.get().find(x => x.id === id);
+  if (!p) return;
+  loadTimerProfile(p, true);
+  openTimerOverlay();
+}
+
+function loadTimerProfile(p, autoplay) {
+  // Stop any running timer first
+  if (T.interval) { clearInterval(T.interval); T.interval = null; }
+  releaseWakeLock();
+
   T.profile    = p;
   T.currentSet = 1;
   T.running    = false;
-  T.interval   = null;
 
   if (p.prepSecs > 0) {
-    T.phase      = 'prep';
-    T.secondsLeft = p.prepSecs;
-    T.totalSecs  = p.prepSecs;
+    T.phase = 'prep'; T.secondsLeft = p.prepSecs; T.totalSecs = p.prepSecs;
   } else {
-    T.phase      = 'work';
-    T.secondsLeft = p.workSecs;
-    T.totalSecs  = p.workSecs;
+    T.phase = 'work'; T.secondsLeft = p.workSecs; T.totalSecs = p.workSecs;
   }
 
+  if (autoplay) timerPlay();
+}
+
+// ─── Overlay open/close (non-destructive) ─────────────────────
+function openTimerOverlay() {
   document.getElementById('timer-overlay').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   renderTimerOverlay();
-  timerPlay();  // auto-start
 }
 
-function closeTimerOverlay() {
-  timerPause();
-  releaseWakeLock();
+// ← back: hides overlay but keeps timer running in background
+function hideTimerOverlay() {
   document.getElementById('timer-overlay').classList.add('hidden');
   document.body.style.overflow = '';
+  // Re-render the timer tab so the resume banner updates
+  if (state.view === 'timer') render();
 }
 
+// ✕ cancel: stops timer completely
+function cancelTimer() {
+  timerStop();
+  T.profile = null;
+  T.phase   = 'idle';
+  document.getElementById('timer-overlay').classList.add('hidden');
+  document.body.style.overflow = '';
+  if (state.view === 'timer') render();
+}
+
+// ─── Timer Execution ──────────────────────────────────────────
 function timerPlay() {
   if (T.running) return;
   T.running = true;
   acquireWakeLock();
-  // Initialise AudioContext on user gesture
   try { getAC(); } catch {}
   T.interval = setInterval(timerTick, 1000);
   renderTimerOverlay();
+  // Also refresh nav dot
+  updateNavDot();
+}
+
+function timerStop() {
+  if (T.interval) { clearInterval(T.interval); T.interval = null; }
+  T.running = false;
+  releaseWakeLock();
 }
 
 function timerPause() {
-  if (!T.running) return;
-  T.running = false;
-  clearInterval(T.interval);
-  T.interval = null;
-  releaseWakeLock();
+  timerStop();
   renderTimerOverlay();
+  updateNavDot();
 }
 
 function timerToggle() {
@@ -1116,7 +1158,7 @@ function timerToggle() {
 }
 
 function timerRestart() {
-  timerPause();
+  timerStop();
   const p = T.profile;
   T.currentSet = 1;
   if (p.prepSecs > 0) {
@@ -1129,126 +1171,135 @@ function timerRestart() {
 
 function timerSkip() {
   timerAdvancePhase();
-  renderTimerOverlay();
+  const overlayHidden = document.getElementById('timer-overlay').classList.contains('hidden');
+  if (!overlayHidden) renderTimerOverlay();
+  else if (state.view === 'timer') render();
 }
 
 function timerTick() {
   T.secondsLeft--;
-
-  // Countdown beeps at 3, 2, 1
   if (T.secondsLeft > 0 && T.secondsLeft <= 3) soundTick();
+  if (T.secondsLeft <= 0) timerAdvancePhase();
 
-  if (T.secondsLeft <= 0) {
-    timerAdvancePhase();
+  const overlayHidden = document.getElementById('timer-overlay').classList.contains('hidden');
+  if (!overlayHidden) {
+    renderTimerOverlay();
+  } else {
+    // Patch only the live elements in the banner — no full re-render
+    const timeEl = document.querySelector('.resume-time');
+    const metaEl = document.querySelector('.resume-meta');
+    if (timeEl) timeEl.textContent = fmtSecs(T.secondsLeft);
+    if (metaEl) {
+      const phaseStr = T.phase === 'prep' ? 'PREPARANDO'
+        : T.phase === 'work' ? `SERIE ${T.currentSet}/${T.profile.sets}`
+        : T.phase === 'rest' ? 'DESCANSO' : '';
+      metaEl.textContent = `${phaseStr} · ${T.running ? 'corriendo' : 'pausado'}`;
+    }
   }
-  renderTimerOverlay();
+  updateNavDot();
 }
 
 function timerAdvancePhase() {
   const p = T.profile;
-
   if (T.phase === 'prep') {
-    T.phase = 'work';
-    T.secondsLeft = p.workSecs;
-    T.totalSecs   = p.workSecs;
+    T.phase = 'work'; T.secondsLeft = p.workSecs; T.totalSecs = p.workSecs;
     soundStart();
-
   } else if (T.phase === 'work') {
     if (p.restSecs > 0) {
-      T.phase = 'rest';
-      T.secondsLeft = p.restSecs;
-      T.totalSecs   = p.restSecs;
+      T.phase = 'rest'; T.secondsLeft = p.restSecs; T.totalSecs = p.restSecs;
       soundRest();
     } else {
-      // No rest — go directly to next set or done
-      if (T.currentSet >= p.sets) {
-        timerFinish(); return;
-      }
+      if (T.currentSet >= p.sets) { timerFinish(); return; }
       T.currentSet++;
-      T.phase = 'work';
-      T.secondsLeft = p.workSecs;
-      T.totalSecs   = p.workSecs;
+      T.phase = 'work'; T.secondsLeft = p.workSecs; T.totalSecs = p.workSecs;
       soundStart();
     }
-
   } else if (T.phase === 'rest') {
-    if (T.currentSet >= p.sets) {
-      timerFinish(); return;
-    }
+    if (T.currentSet >= p.sets) { timerFinish(); return; }
     T.currentSet++;
-    T.phase = 'work';
-    T.secondsLeft = p.workSecs;
-    T.totalSecs   = p.workSecs;
+    T.phase = 'work'; T.secondsLeft = p.workSecs; T.totalSecs = p.workSecs;
     soundStart();
   }
+  // If overlay hidden and on timer view, refresh the banner so phase label updates
+  const overlayHidden = document.getElementById('timer-overlay').classList.contains('hidden');
+  if (overlayHidden && state.view === 'timer') render();
 }
 
 function timerFinish() {
-  clearInterval(T.interval);
-  T.interval = null;
-  T.running  = false;
-  T.phase    = 'done';
-  releaseWakeLock();
+  timerStop();
+  T.phase = 'done';
   soundDone();
+  updateNavDot();
+}
+
+// ─── Nav dot indicator ────────────────────────────────────────
+function updateNavDot() {
+  const btn = document.querySelector('.nav-btn[data-view="timer"]');
+  if (!btn) return;
+  let dot = btn.querySelector('.nav-active-dot');
+  if (T.active && T.phase !== 'done') {
+    if (!dot) {
+      dot = document.createElement('div');
+      dot.className = 'nav-active-dot';
+      btn.appendChild(dot);
+    }
+    dot.classList.toggle('pulsing', T.running);
+  } else {
+    dot?.remove();
+  }
 }
 
 // ─── Timer Overlay Render ─────────────────────────────────────
 function fmtSecs(s) {
   const m = Math.floor(s / 60);
   const sec = s % 60;
-  return m > 0
-    ? `${m}:${String(sec).padStart(2, '0')}`
-    : String(s);
+  return m > 0 ? `${m}:${String(sec).padStart(2, '0')}` : String(s);
 }
 
 function renderTimerOverlay() {
-  document.getElementById('timer-content').innerHTML = buildTimerPanel();
+  const el = document.getElementById('timer-content');
+  if (!el) return;
+  el.innerHTML = buildTimerPanel();
 }
 
 function buildTimerPanel() {
-  const p  = T.profile;
+  const p = T.profile;
   if (!p) return '';
 
-  const phase       = T.phase;
-  const isDone      = phase === 'done';
-  const sLeft       = T.secondsLeft;
-  const total       = T.totalSecs || 1;
-  const progress    = isDone ? 1 : Math.max(0, 1 - (sLeft / total));
+  const phase    = T.phase;
+  const isDone   = phase === 'done';
+  const sLeft    = T.secondsLeft;
+  const total    = T.totalSecs || 1;
+  const progress = isDone ? 1 : Math.max(0, 1 - (sLeft / total));
 
-  // SVG ring
-  const R   = 108;
-  const circ = 2 * Math.PI * R;
-  const dash = circ;
+  const R     = 108;
+  const circ  = 2 * Math.PI * R;
   const offset = circ * (1 - progress);
 
   const phaseLabel = { prep: 'PREPARATE', work: 'SERIE', rest: 'DESCANSO', done: '¡LISTO!' }[phase] || '';
   const phaseClass = { prep: 'prep', work: 'work', rest: 'rest', done: 'done' }[phase] || '';
 
-  // Progress dots
   const dotsHtml = Array.from({ length: p.sets }, (_, i) => {
     const setN = i + 1;
     let cls = '';
-    if (setN < T.currentSet) cls = 'done-set';
-    else if (setN === T.currentSet && phase !== 'prep' && phase !== 'done') cls = 'active-set';
-    else if (isDone) cls = 'done-set';
+    if (isDone || setN < T.currentSet) cls = 'done-set';
+    else if (setN === T.currentSet && phase !== 'prep') cls = 'active-set';
     return `<div class="timer-dot ${cls}"></div>`;
   }).join('');
 
-  // Controls
   let controls;
   if (isDone) {
     controls = `
       <div style="text-align:center;padding:0 20px 40px">
         <div class="timer-done-msg">¡COMPLETASTE ${p.sets} ${p.sets === 1 ? 'SERIE' : 'SERIES'}!</div>
-        <div class="timer-done-sub">${p.workSecs}s trabajo · ${p.restSecs}s descanso</div>
-        <button class="cta-btn" onclick="timerRestart()" style="margin:0 auto">REPETIR</button>
-        <button class="secondary-btn" onclick="closeTimerOverlay()" style="margin-top:12px">CERRAR</button>
+        <div class="timer-done-sub">${fmtSecs(p.workSecs)} trabajo · ${p.restSecs > 0 ? fmtSecs(p.restSecs) + ' descanso' : 'sin descanso'}</div>
+        <button class="cta-btn" onclick="timerRestart();timerPlay()" style="margin:0 auto">REPETIR</button>
+        <button class="secondary-btn" onclick="cancelTimer()" style="margin-top:12px">CERRAR</button>
       </div>`;
   } else {
     const playIcon = T.running
       ? `<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>`
       : `<polygon points="5,3 19,12 5,21" fill="#0A0A0A" stroke="none"/>`;
-
     controls = `
       <div class="timer-controls">
         <button class="ctrl-btn" onclick="timerRestart()" title="Reiniciar">
@@ -1260,7 +1311,7 @@ function buildTimerPanel() {
         <button class="ctrl-btn primary" onclick="timerToggle()">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" stroke-width="2" stroke-linecap="round">${playIcon}</svg>
         </button>
-        <button class="ctrl-btn" onclick="timerSkip()" title="Saltar">
+        <button class="ctrl-btn" onclick="timerSkip()" title="Saltar fase">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <polygon points="5,4 15,12 5,20"/><line x1="19" y1="5" x2="19" y2="19"/>
           </svg>
@@ -1270,31 +1321,34 @@ function buildTimerPanel() {
 
   return `<div class="timer-panel">
     <div class="timer-panel-nav">
-      <button class="icon-btn" onclick="closeTimerOverlay()">✕</button>
+      <button class="icon-btn" onclick="hideTimerOverlay()" title="Volver">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15,18 9,12 15,6"/>
+        </svg>
+      </button>
       <span class="timer-panel-title">${p.name.toUpperCase()}</span>
-      <div style="width:38px"></div>
+      <button class="icon-btn" onclick="cancelTimer()" title="Cancelar rutina" style="font-size:13px">✕</button>
     </div>
 
     <div class="timer-clock-area">
       <div class="timer-phase-label ${phaseClass}">${phaseLabel}</div>
-
       <div class="timer-ring-wrap">
         <svg class="timer-ring-svg" viewBox="0 0 240 240">
           <circle class="timer-ring-bg" cx="120" cy="120" r="${R}"/>
           <circle class="timer-ring-progress ${phaseClass}" cx="120" cy="120" r="${R}"
-            stroke-dasharray="${dash}" stroke-dashoffset="${offset}"/>
+            stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/>
         </svg>
         <div class="timer-time">
           <div class="timer-digits">${isDone ? '✓' : fmtSecs(sLeft)}</div>
           <div class="timer-set-info">
-            ${isDone ? '' : (phase === 'prep' ? 'ARRANCANDO' : `SERIE ${T.currentSet} / ${p.sets}`)}
+            ${isDone ? '' : phase === 'prep' ? 'ARRANCANDO' : `SERIE ${T.currentSet} / ${p.sets}`}
           </div>
         </div>
       </div>
-
       <div class="timer-dots">${dotsHtml}</div>
     </div>
 
     ${controls}
   </div>`;
 }
+
