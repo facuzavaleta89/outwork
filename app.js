@@ -832,7 +832,7 @@ function navigate(view) {
 }
 
 function render() {
-  const views = { home: viewHome, history: viewHistory, progress: viewProgress, exercises: viewExercises };
+  const views = { home: viewHome, history: viewHistory, progress: viewProgress, exercises: viewExercises, timer: viewTimer };
   document.getElementById('app').innerHTML = views[state.view]();
   window.scrollTo(0, 0);
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -849,3 +849,452 @@ if ('serviceWorker' in navigator) {
 
 // ─── Boot ─────────────────────────────────────────────────────
 render();
+
+// ============================================================
+// TIMER MODULE
+// ============================================================
+
+// ─── Timer Storage ────────────────────────────────────────────
+const TimerDB = {
+  K: 'outwork_timer_profiles',
+  get() {
+    try { return JSON.parse(localStorage.getItem(this.K) || '[]'); } catch { return []; }
+  },
+  save(profiles) {
+    try { localStorage.setItem(this.K, JSON.stringify(profiles)); } catch {}
+  },
+  add(p)     { const all = this.get(); all.push(p); this.save(all); },
+  delete(id) { this.save(this.get().filter(p => p.id !== id)); },
+  update(p)  { this.save(this.get().map(x => x.id === p.id ? p : x)); },
+};
+
+// ─── Timer State ──────────────────────────────────────────────
+const T = {
+  // profile form values (for new/edit)
+  form: { name: 'Mi rutina', sets: 4, workSecs: 40, restSecs: 20, prepSecs: 5 },
+  editingId: null,   // null = new, string = editing existing
+
+  // runtime
+  phase: 'idle',     // 'idle' | 'prep' | 'work' | 'rest' | 'done'
+  currentSet: 0,
+  secondsLeft: 0,
+  totalSecs: 0,
+  running: false,
+  interval: null,
+  profile: null,
+  wakeLock: null,
+};
+
+// ─── Web Audio ────────────────────────────────────────────────
+let AC = null;
+function getAC() {
+  if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+  // iOS requires resume after user gesture
+  if (AC.state === 'suspended') AC.resume();
+  return AC;
+}
+
+function beep(freq, dur, type = 'sine', vol = 0.35, startDelay = 0) {
+  try {
+    const ac   = getAC();
+    const osc  = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.connect(gain);
+    gain.connect(ac.destination);
+    osc.type = type;
+    osc.frequency.value = freq;
+    const t = ac.currentTime + startDelay;
+    gain.gain.setValueAtTime(vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  } catch {}
+}
+
+// Short tick for countdown (3, 2, 1)
+function soundTick()  { beep(880, 0.08, 'sine', 0.25); }
+
+// Double ascending beep — "go!"
+function soundStart() {
+  beep(660, 0.10, 'square', 0.28, 0);
+  beep(990, 0.15, 'square', 0.32, 0.13);
+}
+
+// Descending soft tone — "rest"
+function soundRest() {
+  beep(660, 0.12, 'sine', 0.30, 0);
+  beep(440, 0.25, 'sine', 0.22, 0.14);
+}
+
+// Triple ascending — "done!"
+function soundDone() {
+  beep(660, 0.10, 'square', 0.28, 0);
+  beep(880, 0.10, 'square', 0.30, 0.14);
+  beep(1100, 0.22, 'square', 0.28, 0.28);
+}
+
+// ─── WakeLock ─────────────────────────────────────────────────
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try { T.wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+}
+function releaseWakeLock() {
+  if (T.wakeLock) { T.wakeLock.release().catch(() => {}); T.wakeLock = null; }
+}
+
+// ─── Timer View ───────────────────────────────────────────────
+function viewTimer() {
+  const profiles = TimerDB.get();
+  const f = T.form;
+  const isEditing = T.editingId !== null;
+
+  const profilesHtml = profiles.length
+    ? profiles.map(p => `
+        <div class="profile-card">
+          <div class="profile-info" onclick="startTimer('${p.id}')">
+            <div class="profile-name">${p.name}</div>
+            <div class="profile-meta">${p.sets} series · ${p.workSecs}s trabajo · ${p.restSecs}s descanso · prep ${p.prepSecs}s</div>
+          </div>
+          <div class="profile-actions">
+            <button class="delete-btn" onclick="editProfile('${p.id}')">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+            <button class="delete-btn" onclick="deleteProfile('${p.id}')">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3,6 5,6 21,6"/>
+                <path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/>
+              </svg>
+            </button>
+            <button class="play-btn" onclick="startTimer('${p.id}')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5,3 19,12 5,21" fill="#0A0A0A" stroke="none"/>
+              </svg>
+            </button>
+          </div>
+        </div>`)
+      .join('')
+    : '<p class="empty-state" style="padding:20px 0">No hay perfiles todavía.<br>Creá uno abajo.</p>';
+
+  // Form num-input helper
+  const numField = (label, key, min, max, unit = '') => `
+    <div class="form-field">
+      <span class="form-label">${label}${unit ? ' (' + unit + ')' : ''}</span>
+      <div class="num-input-wrap">
+        <button class="num-input-btn" onclick="tFormChg('${key}',-1,${min},${max})">−</button>
+        <span class="num-input-val" id="tf-${key}">${f[key]}</span>
+        <button class="num-input-btn" onclick="tFormChg('${key}',1,${min},${max})">+</button>
+      </div>
+    </div>`;
+
+  return `<div class="view timer-view">
+    <h1 class="view-title">TIMER</h1>
+    <div class="timer-profiles">${profilesHtml}</div>
+
+    <div class="profile-form-wrap">
+      <h3>${isEditing ? 'EDITAR PERFIL' : 'NUEVO PERFIL'}</h3>
+      <div class="form-row full">
+        <div class="form-field">
+          <span class="form-label">Nombre</span>
+          <input id="tf-name" class="text-input" type="text" value="${f.name}"
+            oninput="T.form.name=this.value" placeholder="Mi rutina">
+        </div>
+      </div>
+      <div class="form-row">
+        ${numField('Series', 'sets', 1, 30)}
+        ${numField('Preparación', 'prepSecs', 0, 30, 'seg')}
+      </div>
+      <div class="form-row">
+        ${numField('Trabajo', 'workSecs', 5, 300, 'seg')}
+        ${numField('Descanso', 'restSecs', 0, 300, 'seg')}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        ${isEditing ? `<button class="secondary-btn" style="flex:1" onclick="cancelEditProfile()">Cancelar</button>` : ''}
+        <button class="secondary-btn" style="flex:2;border-color:rgba(198,255,0,0.4);color:var(--accent)"
+          onclick="saveProfile()">${isEditing ? 'GUARDAR CAMBIOS' : '+ GUARDAR PERFIL'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─── Timer Form Actions ───────────────────────────────────────
+function tFormChg(key, delta, min, max) {
+  T.form[key] = Math.max(min, Math.min(max, T.form[key] + delta));
+  const el = document.getElementById('tf-' + key);
+  if (el) el.textContent = T.form[key];
+}
+
+function saveProfile() {
+  const name = (document.getElementById('tf-name')?.value || T.form.name).trim();
+  if (!name) { alert('Poné un nombre al perfil.'); return; }
+  T.form.name = name;
+
+  if (T.editingId) {
+    TimerDB.update({ id: T.editingId, ...T.form });
+    T.editingId = null;
+  } else {
+    TimerDB.add({ id: uid(), ...T.form });
+  }
+  render();
+}
+
+function editProfile(id) {
+  const p = TimerDB.get().find(x => x.id === id);
+  if (!p) return;
+  T.form = { name: p.name, sets: p.sets, workSecs: p.workSecs, restSecs: p.restSecs, prepSecs: p.prepSecs };
+  T.editingId = id;
+  render();
+  // Scroll to form
+  setTimeout(() => document.querySelector('.profile-form-wrap')?.scrollIntoView({ behavior: 'smooth' }), 50);
+}
+
+function cancelEditProfile() {
+  T.editingId = null;
+  T.form = { name: 'Mi rutina', sets: 4, workSecs: 40, restSecs: 20, prepSecs: 5 };
+  render();
+}
+
+function deleteProfile(id) {
+  if (confirm('¿Eliminar este perfil?')) { TimerDB.delete(id); render(); }
+}
+
+// ─── Timer Execution ──────────────────────────────────────────
+function startTimer(id) {
+  const p = TimerDB.get().find(x => x.id === id);
+  if (!p) return;
+  T.profile    = p;
+  T.currentSet = 1;
+  T.running    = false;
+  T.interval   = null;
+
+  if (p.prepSecs > 0) {
+    T.phase      = 'prep';
+    T.secondsLeft = p.prepSecs;
+    T.totalSecs  = p.prepSecs;
+  } else {
+    T.phase      = 'work';
+    T.secondsLeft = p.workSecs;
+    T.totalSecs  = p.workSecs;
+  }
+
+  document.getElementById('timer-overlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  renderTimerOverlay();
+  timerPlay();  // auto-start
+}
+
+function closeTimerOverlay() {
+  timerPause();
+  releaseWakeLock();
+  document.getElementById('timer-overlay').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+function timerPlay() {
+  if (T.running) return;
+  T.running = true;
+  acquireWakeLock();
+  // Initialise AudioContext on user gesture
+  try { getAC(); } catch {}
+  T.interval = setInterval(timerTick, 1000);
+  renderTimerOverlay();
+}
+
+function timerPause() {
+  if (!T.running) return;
+  T.running = false;
+  clearInterval(T.interval);
+  T.interval = null;
+  releaseWakeLock();
+  renderTimerOverlay();
+}
+
+function timerToggle() {
+  T.running ? timerPause() : timerPlay();
+}
+
+function timerRestart() {
+  timerPause();
+  const p = T.profile;
+  T.currentSet = 1;
+  if (p.prepSecs > 0) {
+    T.phase = 'prep'; T.secondsLeft = p.prepSecs; T.totalSecs = p.prepSecs;
+  } else {
+    T.phase = 'work'; T.secondsLeft = p.workSecs; T.totalSecs = p.workSecs;
+  }
+  renderTimerOverlay();
+}
+
+function timerSkip() {
+  timerAdvancePhase();
+  renderTimerOverlay();
+}
+
+function timerTick() {
+  T.secondsLeft--;
+
+  // Countdown beeps at 3, 2, 1
+  if (T.secondsLeft > 0 && T.secondsLeft <= 3) soundTick();
+
+  if (T.secondsLeft <= 0) {
+    timerAdvancePhase();
+  }
+  renderTimerOverlay();
+}
+
+function timerAdvancePhase() {
+  const p = T.profile;
+
+  if (T.phase === 'prep') {
+    T.phase = 'work';
+    T.secondsLeft = p.workSecs;
+    T.totalSecs   = p.workSecs;
+    soundStart();
+
+  } else if (T.phase === 'work') {
+    if (p.restSecs > 0) {
+      T.phase = 'rest';
+      T.secondsLeft = p.restSecs;
+      T.totalSecs   = p.restSecs;
+      soundRest();
+    } else {
+      // No rest — go directly to next set or done
+      if (T.currentSet >= p.sets) {
+        timerFinish(); return;
+      }
+      T.currentSet++;
+      T.phase = 'work';
+      T.secondsLeft = p.workSecs;
+      T.totalSecs   = p.workSecs;
+      soundStart();
+    }
+
+  } else if (T.phase === 'rest') {
+    if (T.currentSet >= p.sets) {
+      timerFinish(); return;
+    }
+    T.currentSet++;
+    T.phase = 'work';
+    T.secondsLeft = p.workSecs;
+    T.totalSecs   = p.workSecs;
+    soundStart();
+  }
+}
+
+function timerFinish() {
+  clearInterval(T.interval);
+  T.interval = null;
+  T.running  = false;
+  T.phase    = 'done';
+  releaseWakeLock();
+  soundDone();
+}
+
+// ─── Timer Overlay Render ─────────────────────────────────────
+function fmtSecs(s) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0
+    ? `${m}:${String(sec).padStart(2, '0')}`
+    : String(s);
+}
+
+function renderTimerOverlay() {
+  document.getElementById('timer-content').innerHTML = buildTimerPanel();
+}
+
+function buildTimerPanel() {
+  const p  = T.profile;
+  if (!p) return '';
+
+  const phase       = T.phase;
+  const isDone      = phase === 'done';
+  const sLeft       = T.secondsLeft;
+  const total       = T.totalSecs || 1;
+  const progress    = isDone ? 1 : Math.max(0, 1 - (sLeft / total));
+
+  // SVG ring
+  const R   = 108;
+  const circ = 2 * Math.PI * R;
+  const dash = circ;
+  const offset = circ * (1 - progress);
+
+  const phaseLabel = { prep: 'PREPARATE', work: 'SERIE', rest: 'DESCANSO', done: '¡LISTO!' }[phase] || '';
+  const phaseClass = { prep: 'prep', work: 'work', rest: 'rest', done: 'done' }[phase] || '';
+
+  // Progress dots
+  const dotsHtml = Array.from({ length: p.sets }, (_, i) => {
+    const setN = i + 1;
+    let cls = '';
+    if (setN < T.currentSet) cls = 'done-set';
+    else if (setN === T.currentSet && phase !== 'prep' && phase !== 'done') cls = 'active-set';
+    else if (isDone) cls = 'done-set';
+    return `<div class="timer-dot ${cls}"></div>`;
+  }).join('');
+
+  // Controls
+  let controls;
+  if (isDone) {
+    controls = `
+      <div style="text-align:center;padding:0 20px 40px">
+        <div class="timer-done-msg">¡COMPLETASTE ${p.sets} ${p.sets === 1 ? 'SERIE' : 'SERIES'}!</div>
+        <div class="timer-done-sub">${p.workSecs}s trabajo · ${p.restSecs}s descanso</div>
+        <button class="cta-btn" onclick="timerRestart()" style="margin:0 auto">REPETIR</button>
+        <button class="secondary-btn" onclick="closeTimerOverlay()" style="margin-top:12px">CERRAR</button>
+      </div>`;
+  } else {
+    const playIcon = T.running
+      ? `<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>`
+      : `<polygon points="5,3 19,12 5,21" fill="#0A0A0A" stroke="none"/>`;
+
+    controls = `
+      <div class="timer-controls">
+        <button class="ctrl-btn" onclick="timerRestart()" title="Reiniciar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <polyline points="1,4 1,10 7,10"/>
+            <path d="M3.51 15a9 9 0 1 0 .49-4.95"/>
+          </svg>
+        </button>
+        <button class="ctrl-btn primary" onclick="timerToggle()">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" stroke-width="2" stroke-linecap="round">${playIcon}</svg>
+        </button>
+        <button class="ctrl-btn" onclick="timerSkip()" title="Saltar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <polygon points="5,4 15,12 5,20"/><line x1="19" y1="5" x2="19" y2="19"/>
+          </svg>
+        </button>
+      </div>`;
+  }
+
+  return `<div class="timer-panel">
+    <div class="timer-panel-nav">
+      <button class="icon-btn" onclick="closeTimerOverlay()">✕</button>
+      <span class="timer-panel-title">${p.name.toUpperCase()}</span>
+      <div style="width:38px"></div>
+    </div>
+
+    <div class="timer-clock-area">
+      <div class="timer-phase-label ${phaseClass}">${phaseLabel}</div>
+
+      <div class="timer-ring-wrap">
+        <svg class="timer-ring-svg" viewBox="0 0 240 240">
+          <circle class="timer-ring-bg" cx="120" cy="120" r="${R}"/>
+          <circle class="timer-ring-progress ${phaseClass}" cx="120" cy="120" r="${R}"
+            stroke-dasharray="${dash}" stroke-dashoffset="${offset}"/>
+        </svg>
+        <div class="timer-time">
+          <div class="timer-digits">${isDone ? '✓' : fmtSecs(sLeft)}</div>
+          <div class="timer-set-info">
+            ${isDone ? '' : (phase === 'prep' ? 'ARRANCANDO' : `SERIE ${T.currentSet} / ${p.sets}`)}
+          </div>
+        </div>
+      </div>
+
+      <div class="timer-dots">${dotsHtml}</div>
+    </div>
+
+    ${controls}
+  </div>`;
+}
