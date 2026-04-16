@@ -927,19 +927,27 @@ function viewTimer() {
   const isEditing = T.editingId !== null;
 
   // If there's an active timer, show a resume banner at the top
+  const isRest = T.phase === 'rest';
   const resumeBanner = T.active ? `
-    <div class="resume-banner" onclick="openTimerOverlay()">
+    <div class="resume-banner ${isRest ? 'rest' : ''}" onclick="openTimerOverlay()">
       <div class="resume-info">
-        <div class="resume-dot ${T.running ? 'pulsing' : ''}"></div>
+        <div class="resume-dot ${T.running ? 'pulsing' : ''} ${isRest ? 'rest' : ''}"></div>
         <div>
-          <div class="resume-name">${T.profile.name}</div>
+          <div class="resume-name ${isRest ? 'rest' : ''}">${T.profile.name}</div>
           <div class="resume-meta">
             ${T.phase === 'prep' ? 'PREPARANDO' : T.phase === 'work' ? `SERIE ${T.currentSet}/${T.profile.sets}` : T.phase === 'rest' ? 'DESCANSO' : ''}
             · ${T.running ? 'corriendo' : 'pausado'}
           </div>
         </div>
       </div>
-      <div class="resume-time">${fmtSecs(T.secondsLeft)}</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="resume-time ${isRest ? 'rest' : ''}">${fmtSecs(T.secondsLeft)}</div>
+        <button class="resume-playpause ${isRest ? 'rest' : ''}" onclick="event.stopPropagation();timerToggle();updateResumeBanner()">
+          ${T.running
+            ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18" rx="1"/><rect x="15" y="3" width="4" height="18" rx="1"/></svg>`
+            : `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" fill="currentColor"/></svg>`}
+        </button>
+      </div>
     </div>` : '';
 
   const profilesHtml = profiles.length
@@ -1000,7 +1008,7 @@ function viewTimer() {
         </div>
       </div>
       <div class="form-row">
-        ${numField('Series', 'sets', 1, 30)}
+        ${numField('Series / Rounds', 'sets', 1, 30)}
         ${numField('Preparación', 'prepSecs', 0, 60, 'seg')}
       </div>
       <div class="form-row">
@@ -1067,7 +1075,29 @@ function deleteProfile(id) {
   if (confirm('¿Eliminar este perfil?')) { TimerDB.delete(id); render(); }
 }
 
-// ─── Two entry modes ──────────────────────────────────────────
+function updateResumeBanner() {
+  // Patch banner elements in place — avoids full re-render losing scroll/focus
+  if (!T.active) return;
+  const isRest = T.phase === 'rest';
+  const banner = document.querySelector('.resume-banner');
+  if (!banner) return;
+  banner.classList.toggle('rest', isRest);
+  const dot = banner.querySelector('.resume-dot');
+  if (dot) { dot.classList.toggle('pulsing', T.running); dot.classList.toggle('rest', isRest); }
+  const nameEl = banner.querySelector('.resume-name');
+  if (nameEl) nameEl.classList.toggle('rest', isRest);
+  const timeEl = banner.querySelector('.resume-time');
+  if (timeEl) { timeEl.textContent = fmtSecs(T.secondsLeft); timeEl.classList.toggle('rest', isRest); }
+  const ppBtn = banner.querySelector('.resume-playpause');
+  if (ppBtn) {
+    ppBtn.classList.toggle('rest', isRest);
+    ppBtn.innerHTML = T.running
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18" rx="1"/><rect x="15" y="3" width="4" height="18" rx="1"/></svg>`
+      : `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" fill="currentColor"/></svg>`;
+  }
+}
+
+
 // Tap on card → load profile, open overlay PAUSED (user hits play)
 function openProfileTimer(id) {
   // If same profile already active, just re-open overlay
@@ -1185,10 +1215,9 @@ function timerTick() {
   if (!overlayHidden) {
     renderTimerOverlay();
   } else {
-    // Patch only the live elements in the banner — no full re-render
-    const timeEl = document.querySelector('.resume-time');
+    updateResumeBanner();
+    // Also patch meta text
     const metaEl = document.querySelector('.resume-meta');
-    if (timeEl) timeEl.textContent = fmtSecs(T.secondsLeft);
     if (metaEl) {
       const phaseStr = T.phase === 'prep' ? 'PREPARANDO'
         : T.phase === 'work' ? `SERIE ${T.currentSet}/${T.profile.sets}`
