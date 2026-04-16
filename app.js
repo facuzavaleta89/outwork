@@ -98,9 +98,9 @@ function fmtDate(str) {
 // Volume: reps-based returns reps total, cardio returns km*80+min (heatmap proxy)
 function exVolume(ex) {
   if (ex.type === 'cardio') {
-    return ex.entries.reduce((a, e) => a + (e.km || 0) * 80 + (e.min || 0), 0);
+    return (ex.entries || []).reduce((a, e) => a + (e.km || 0) * 80 + (e.min || 0), 0);
   }
-  return ex.sets.reduce((a, s) => a + s.reps, 0);
+  return (ex.sets || []).reduce((a, s) => a + (s.reps || 0), 0);
 }
 function sessionVolume(session) {
   return session.exercises.reduce((a, ex) => a + exVolume(ex), 0);
@@ -170,7 +170,7 @@ function renderHeatMap() {
   const cur = new Date(startDate);
 
   while (cur <= today) {
-    const key = cur.toISOString().split('T')[0];
+    const key = localDateStr(cur);
     const v = dayMap[key] || 0;
     const colIndex = Math.floor(cells.length / 7);
 
@@ -955,7 +955,7 @@ function viewTimer() {
         <div class="profile-card">
           <div class="profile-info" onclick="openProfileTimer('${p.id}')">
             <div class="profile-name">${p.name}</div>
-            <div class="profile-meta">${p.sets} series · ${p.workSecs}s trabajo · ${p.restSecs}s descanso · prep ${p.prepSecs}s</div>
+            <div class="profile-meta">${p.sets} ${p.sets === 1 ? 'serie' : 'series'} · ${fmtSecs(p.workSecs)} trabajo · ${p.restSecs > 0 ? fmtSecs(p.restSecs) + ' descanso' : 'sin descanso'}${p.prepSecs > 0 ? ' · prep ' + p.prepSecs + 's' : ''}</div>
           </div>
           <div class="profile-actions">
             <button class="delete-btn" onclick="editProfile('${p.id}')">
@@ -1072,7 +1072,18 @@ function cancelEditProfile() {
 }
 
 function deleteProfile(id) {
-  if (confirm('¿Eliminar este perfil?')) { TimerDB.delete(id); render(); }
+  if (confirm('¿Eliminar este perfil?')) {
+    // If this profile is running, cancel the timer first
+    if (T.active && T.profile?.id === id) {
+      timerStop();
+      T.profile = null;
+      T.phase = 'idle';
+      document.getElementById('timer-overlay').classList.add('hidden');
+      document.body.style.overflow = '';
+    }
+    TimerDB.delete(id);
+    render();
+  }
 }
 
 function updateResumeBanner() {
@@ -1249,9 +1260,16 @@ function timerAdvancePhase() {
     T.phase = 'work'; T.secondsLeft = p.workSecs; T.totalSecs = p.workSecs;
     soundStart();
   }
-  // If overlay hidden and on timer view, refresh the banner so phase label updates
+  // If overlay hidden: patch banner for normal phase changes, full render only on finish
   const overlayHidden = document.getElementById('timer-overlay').classList.contains('hidden');
-  if (overlayHidden && state.view === 'timer') render();
+  if (overlayHidden && state.view === 'timer') {
+    updateResumeBanner();
+    const metaEl = document.querySelector('.resume-meta');
+    if (metaEl) {
+      const phaseStr = T.phase === 'work' ? `SERIE ${T.currentSet}/${T.profile.sets}` : 'DESCANSO';
+      metaEl.textContent = `${phaseStr} · ${T.running ? 'corriendo' : 'pausado'}`;
+    }
+  }
 }
 
 function timerFinish() {
@@ -1259,6 +1277,8 @@ function timerFinish() {
   T.phase = 'done';
   soundDone();
   updateNavDot();
+  // Re-open overlay to show the done screen — user needs to close it explicitly
+  openTimerOverlay();
 }
 
 // ─── Nav dot indicator ────────────────────────────────────────
@@ -1280,6 +1300,7 @@ function updateNavDot() {
 
 // ─── Timer Overlay Render ─────────────────────────────────────
 function fmtSecs(s) {
+  s = Math.max(0, s);
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return m > 0 ? `${m}:${String(sec).padStart(2, '0')}` : String(s);
