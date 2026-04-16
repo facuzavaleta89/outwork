@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "fz-outwork": "fz-outwork",
+    "default": "fz-outwork"
+  },
+  "targets": {},
+  "etags": {}
+}
