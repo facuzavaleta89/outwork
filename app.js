@@ -108,7 +108,7 @@ function sessionVolume(session) {
 function sessionRepTotal(session) {
   return session.exercises
     .filter(ex => ex.type !== 'cardio')
-    .reduce((a, ex) => a + ex.sets.reduce((b, s) => b + s.reps, 0), 0);
+    .reduce((a, ex) => a + (ex.sets || []).reduce((b, s) => b + (s.reps || 0), 0), 0);
 }
 
 function localDateStr(d) {
@@ -697,6 +697,7 @@ function goLog() {
 
 function backToSelect() {
   state.sessionStep = 'select';
+  state.session.exercises = []; // clear so renderLogStep re-initializes from selectedIds
   renderSession();
 }
 
@@ -801,23 +802,25 @@ function importData(event) {
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
-      if (data.sessions) {
-        // Merge: keep existing sessions, add imported ones that aren't already present
-        const existing = DB.getSessions();
-        const existingIds = new Set(existing.map(s => s.id));
-        const merged = [...existing, ...data.sessions.filter(s => !existingIds.has(s.id))];
-        merged.sort((a, b) => a.date.localeCompare(b.date));
-        DB.saveSessions(merged);
-      }
       if (data.customExercises) {
         data.customExercises.forEach(ex => {
           const existing = DB.getExercises();
           if (!existing.find(e => e.id === ex.id)) DB.addExercise(ex);
         });
       }
-      render();
-      const count = data.sessions?.length || 0;
-      alert(`¡Importación exitosa! ${count} sesiones procesadas.`);
+      if (data.sessions) {
+        const existing = DB.getSessions();
+        const existingIds = new Set(existing.map(s => s.id));
+        const newSessions = data.sessions.filter(s => !existingIds.has(s.id));
+        const merged = [...existing, ...newSessions];
+        merged.sort((a, b) => a.date.localeCompare(b.date));
+        DB.saveSessions(merged);
+        render();
+        alert(`¡Importación exitosa! ${newSessions.length} sesiones nuevas agregadas.`);
+      } else {
+        render();
+        alert('Importación completa.');
+      }
     } catch { alert('El archivo no es válido.'); }
   };
   reader.readAsText(file);
@@ -838,6 +841,7 @@ function render() {
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === state.view);
   });
+  updateNavDot(); // restore timer dot — render() rebuilds nav HTML from scratch
 }
 
 // ─── PWA ──────────────────────────────────────────────────────
@@ -1165,6 +1169,7 @@ function cancelTimer() {
   timerStop();
   T.profile = null;
   T.phase   = 'idle';
+  updateNavDot();
   document.getElementById('timer-overlay').classList.add('hidden');
   document.body.style.overflow = '';
   if (state.view === 'timer') render();
