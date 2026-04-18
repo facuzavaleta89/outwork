@@ -1371,3 +1371,48 @@ body {
 }
 .resume-playpause:active { transform: scale(0.92); filter: brightness(0.9); }
 .resume-playpause.rest { background: #4A9EFF; }
+
+/* ─── Previous session comparison ───────────────────────────── */
+.prev-session {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 7px 10px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 7px;
+  border-left: 2px solid var(--border-light);
+}
+
+.prev-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.prev-sets {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prev-total {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.prev-total.improved {
+  color: var(--accent);
+}

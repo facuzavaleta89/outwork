@@ -143,16 +143,13 @@ function renderHeatMap() {
     dayMap[s.date] = (dayMap[s.date] || 0) + v;
   });
 
-  // Use percentile-based thresholds for richer contrast
-  const volumes = Object.values(dayMap).filter(v => v > 0).sort((a, b) => a - b);
-  const p = (pct) => volumes[Math.floor(pct * (volumes.length - 1))] || 1;
-  const t1 = p(0.25), t2 = p(0.50), t3 = p(0.75);
-
+  // Absolute thresholds based on rep volume:
+  // 0 = no activity, 1 = light (<75), 2 = low-mid (75-99), 3 = mid-high (100-124), 4 = high (125+)
   function level(v) {
-    if (v === 0) return 0;
-    if (v <= t1) return 1;
-    if (v <= t2) return 2;
-    if (v <= t3) return 3;
+    if (v === 0)   return 0;
+    if (v < 75)    return 1;
+    if (v < 100)   return 2;
+    if (v < 125)   return 3;
     return 4;
   }
 
@@ -227,17 +224,18 @@ function renderProgressChart(exerciseId) {
     .map(s => {
       const ex = s.exercises.find(e => e.exerciseId === exerciseId);
       if (isCardio) {
-        const totalKm  = ex.entries.reduce((a, e) => a + (e.km  || 0), 0);
-        const totalMin = ex.entries.reduce((a, e) => a + (e.min || 0), 0);
+        const totalKm  = (ex.entries || []).reduce((a, e) => a + (e.km  || 0), 0);
+        const totalMin = (ex.entries || []).reduce((a, e) => a + (e.min || 0), 0);
         return { date: s.date, primary: totalKm, secondary: totalMin };
       } else {
-        const total = ex.sets.reduce((a, set) => a + set.reps, 0);
-        const best  = Math.max(...ex.sets.map(set => set.reps));
+        const sets  = ex.sets || [];
+        const total = sets.reduce((a, set) => a + (set.reps || 0), 0);
+        const best  = sets.length ? Math.max(...sets.map(set => set.reps || 0)) : 0;
         return { date: s.date, primary: total, best };
       }
     })
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-20);
+    .slice(-5);  // max 5 sessions — clean, readable, no overlap
 
   if (!data.length) {
     return `<p class="empty-state">Sin registros de ${exercise.name} todavía.</p>`;
@@ -245,11 +243,14 @@ function renderProgressChart(exerciseId) {
 
   const maxVal = Math.max(...data.map(d => d.primary), 1);
   const W = 340, H = 180;
-  const PAD = { top: 20, right: 12, bottom: 44, left: 36 };
+  const PAD = { top: 20, right: 16, bottom: 44, left: 46 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
   const n = data.length;
-  const barW = Math.max(8, Math.min(24, cW / n - 4));
+  // Fixed bar width + gap — bars accumulate left to right, no stretching
+  const barW = 32;
+  const gap  = n > 1 ? Math.min(24, (cW - barW * n) / (n - 1)) : 0;
+  const startX = PAD.left;
 
   const gridLines = [0.25, 0.5, 0.75, 1].map(r => {
     const y = PAD.top + cH - r * cH;
@@ -258,12 +259,12 @@ function renderProgressChart(exerciseId) {
       : Math.round(maxVal * r);
     return `<line x1="${PAD.left}" y1="${y}" x2="${W - PAD.right}" y2="${y}"
               stroke="#1E1E1E" stroke-width="1"/>
-            <text x="${PAD.left - 6}" y="${y + 4}" text-anchor="end"
+            <text x="${PAD.left - 8}" y="${y + 4}" text-anchor="end"
               font-size="9" fill="#555" font-family="Space Mono, monospace">${label}</text>`;
   }).join('');
 
   const bars = data.map((d, i) => {
-    const x = PAD.left + (n === 1 ? cW / 2 : (i / (n - 1)) * cW);
+    const x = startX + barW / 2 + i * (barW + gap);
     const bH = Math.max(4, (d.primary / maxVal) * cH);
     const y = PAD.top + cH - bH;
     const isMax = d.primary === maxVal;
@@ -335,7 +336,7 @@ function viewHome() {
         const cardioEx = s.exercises.find(e => e.type === 'cardio');
         const parts = [];
         if (vol > 0) parts.push(vol + ' reps');
-        if (cardioEx) parts.push(cardioEx.entries.reduce((a, e) => a + (e.km || 0), 0).toFixed(1) + ' km');
+        if (cardioEx) parts.push((cardioEx.entries || []).reduce((a, e) => a + (e.km || 0), 0).toFixed(1) + ' km');
         const volStr = parts.join(' · ') || '—';
         return `
           <div class="session-card mini">
@@ -405,15 +406,16 @@ function viewHistory() {
       const info = exercises.find(e => e.id === ex.exerciseId);
       if (!info) return '';
       if (ex.type === 'cardio') {
-        const totalKm  = ex.entries.reduce((a, e) => a + (e.km  || 0), 0).toFixed(1);
-        const totalMin = ex.entries.reduce((a, e) => a + (e.min || 0), 0);
+        const totalKm  = (ex.entries || []).reduce((a, e) => a + (e.km  || 0), 0).toFixed(1);
+        const totalMin = (ex.entries || []).reduce((a, e) => a + (e.min || 0), 0);
         return `<div class="ex-row">
           <span class="ex-name">${info.name}</span>
           <span class="ex-sets"><em>${totalKm} km · ${totalMin} min</em></span>
         </div>`;
       }
-      const total = ex.sets.reduce((a, set) => a + set.reps, 0);
-      const setsStr = ex.sets.map((set, i) => `S${i + 1}:${set.reps}`).join('  ');
+      const sets = ex.sets || [];
+      const total = sets.reduce((a, set) => a + (set.reps || 0), 0);
+      const setsStr = sets.map((set, i) => `S${i + 1}:${set.reps || 0}`).join('  ');
       return `<div class="ex-row">
         <span class="ex-name">${info.name}</span>
         <span class="ex-sets">${setsStr} <em>(${total})</em></span>
@@ -581,6 +583,20 @@ function renderSelectStep() {
   </div>`;
 }
 
+// ─── Previous session lookup ──────────────────────────────────
+function getPrevSessionData(exerciseId) {
+  // Find the most recent past session that includes this exercise
+  // Excludes today's current session (state.session.id)
+  const sessions = DB.getSessions()
+    .filter(s => s.id !== state.session?.id && s.exercises.some(e => e.exerciseId === exerciseId))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (!sessions.length) return null;
+  const s = sessions[0];
+  const ex = s.exercises.find(e => e.exerciseId === exerciseId);
+  return { date: s.date, ex };
+}
+
 function renderLogStep() {
   const exercises = DB.getExercises();
 
@@ -596,12 +612,31 @@ function renderLogStep() {
 
   const logHtml = state.session.exercises.map((ex, ei) => {
     const info = exercises.find(e => e.id === ex.exerciseId);
+    const prev = getPrevSessionData(ex.exerciseId);
 
     if (ex.type === 'cardio') {
-      return renderCardioLog(ex, ei, info);
+      return renderCardioLog(ex, ei, info, prev);
     }
 
     const total = ex.sets.reduce((a, s) => a + s.reps, 0);
+
+    // Build prev comparison line
+    let prevHtml = '';
+    if (prev) {
+      const prevSets  = (prev.ex.sets || []);
+      const prevTotal = prevSets.reduce((a, s) => a + (s.reps || 0), 0);
+      const setsStr   = prevSets.map((s, i) => `S${i + 1}:${s.reps}`).join(' ');
+      const improved  = total > prevTotal;
+      const sameDay   = prev.date === todayStr();
+      const dateLabel = sameDay ? 'hoy antes' : fmtDate(prev.date);
+      prevHtml = `
+        <div class="prev-session">
+          <span class="prev-label">Última (${dateLabel}):</span>
+          <span class="prev-sets">${setsStr}</span>
+          <span class="prev-total ${improved ? 'improved' : ''}">${prevTotal}${improved ? ' ↑' : ''}</span>
+        </div>`;
+    }
+
     const setsHtml = ex.sets.map((set, si) => `
       <div class="set-row">
         <span class="set-label">S${si + 1}</span>
@@ -618,6 +653,7 @@ function renderLogStep() {
         <span class="log-ex-name">${info?.name || ex.exerciseId}</span>
         <span class="log-ex-total">${total} reps</span>
       </div>
+      ${prevHtml}
       <div class="sets-container">${setsHtml}</div>
       <button class="add-set-btn" onclick="addSet(${ei})">+ SERIE</button>
     </div>`;
@@ -633,7 +669,7 @@ function renderLogStep() {
   </div>`;
 }
 
-function renderCardioLog(ex, ei, info) {
+function renderCardioLog(ex, ei, info, prev) {
   const entriesHtml = ex.entries.map((entry, eni) => {
     const pace = entry.km > 0 && entry.min > 0
       ? (entry.min / entry.km).toFixed(1) + ' min/km'
@@ -669,14 +705,31 @@ function renderCardioLog(ex, ei, info) {
     </div>`;
   }).join('');
 
-  const totalKm  = ex.entries.reduce((a, e) => a + e.km, 0).toFixed(1);
-  const totalMin = ex.entries.reduce((a, e) => a + e.min, 0);
+  const totalKm  = ex.entries.reduce((a, e) => a + (e.km || 0), 0).toFixed(1);
+  const totalMin = ex.entries.reduce((a, e) => a + (e.min || 0), 0);
+
+  let prevHtml = '';
+  if (prev) {
+    const prevEntries = (prev.ex.entries || []);
+    const prevKm  = prevEntries.reduce((a, e) => a + (e.km  || 0), 0);
+    const prevMin = prevEntries.reduce((a, e) => a + (e.min || 0), 0);
+    const improved = parseFloat(totalKm) > prevKm;
+    const sameDay  = prev.date === todayStr();
+    const dateLabel = sameDay ? 'hoy antes' : fmtDate(prev.date);
+    prevHtml = `
+      <div class="prev-session">
+        <span class="prev-label">Última (${dateLabel}):</span>
+        <span class="prev-sets">${prevKm.toFixed(1)} km · ${prevMin} min</span>
+        ${improved ? '<span class="prev-total improved">↑</span>' : ''}
+      </div>`;
+  }
 
   return `<div class="log-exercise">
     <div class="log-ex-header">
       <span class="log-ex-name">${info?.name || 'Cardio'}</span>
       <span class="log-ex-total">${totalKm} km · ${totalMin} min</span>
     </div>
+    ${prevHtml}
     <div class="cardio-log">${entriesHtml}</div>
     <button class="add-set-btn" onclick="addCardioEntry(${ei})">+ SALIDA</button>
   </div>`;
@@ -841,7 +894,7 @@ function render() {
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === state.view);
   });
-  updateNavDot(); // restore timer dot — render() rebuilds nav HTML from scratch
+  try { updateNavDot(); } catch {}
 }
 
 // ─── PWA ──────────────────────────────────────────────────────
